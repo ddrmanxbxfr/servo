@@ -23,32 +23,44 @@ pub enum MIMEMediaType {
     Unknown
 }
 
+pub enum MIMEApacheBugFlag {
+    ON,
+    OFF
+}
+
+pub enum MIMENoSniffFlag {
+    ON,
+    OFF
+}
+
 impl MIMEClassifier {
     //Performs MIME Type Sniffing Algorithm (section 7)
     pub fn classify(&self,
-                    no_sniff: bool,
-                    check_for_apache_bug: bool,
+                    no_sniff_flag: MIMENoSniffFlag,
+                    apache_bug_flag: MIMEApacheBugFlag,
                     supplied_type: &Option<(String, String)>,
                     data: &[u8]) -> Option<(String, String)> {
 
         match *supplied_type {
-            None => self.sniff_unknown_type(!no_sniff, data),
+            None => self.sniff_unknown_type(no_sniff_flag, data),
             Some((ref media_type, ref media_subtype)) => {
-                if no_sniff {
-                    supplied_type.clone()
-                } else if check_for_apache_bug {
-                    self.sniff_text_or_data(data)
-                } else {
-                    match MIMEClassifier::get_media_type(media_type, media_subtype) {
-                        MIMEMediaType::SniffForUnknownType => self.sniff_unknown_type(!no_sniff, data),
-                        MIMEMediaType::Xml => supplied_type.clone(),
-                        //Implied in section 7.3, but flow is not clear
-                        MIMEMediaType::Html =>
-                            self.feeds_classifier.classify(data).or(supplied_type.clone()),
-                        MIMEMediaType::Image => self.image_classifier.classify(data),
-                        MIMEMediaType::AudioVideo => self.audio_video_classifier.classify(data),
-                        MIMEMediaType::Unknown => None
-                    }.or(supplied_type.clone())
+                match no_sniff_flag {
+                    MIMENoSniffFlag::ON => supplied_type.clone(),
+                    MIMENoSniffFlag::OFF => match apache_bug_flag {
+                        MIMEApacheBugFlag::ON => self.sniff_text_or_data(data),
+                        MIMEApacheBugFlag::OFF => match MIMEClassifier::get_media_type(media_type,
+                                                                                       media_subtype) {
+                            MIMEMediaType::SniffForUnknownType => self.sniff_unknown_type(no_sniff_flag,
+                                                                                          data),
+                            MIMEMediaType::Xml => supplied_type.clone(),
+                            //Implied in section 7.3, but flow is not clear
+                            MIMEMediaType::Html =>
+                                self.feeds_classifier.classify(data).or(supplied_type.clone()),
+                            MIMEMediaType::Image => self.image_classifier.classify(data),
+                            MIMEMediaType::AudioVideo => self.audio_video_classifier.classify(data),
+                            MIMEMediaType::Unknown => None
+                        }.or(supplied_type.clone())
+                    }
                 }
             }
         }
@@ -115,12 +127,11 @@ impl MIMEClassifier {
     }
 
     //some sort of iterator over the classifiers might be better?
-    fn sniff_unknown_type(&self, sniff_scriptable: bool, data: &[u8]) ->
+    fn sniff_unknown_type(&self, no_sniff_flag: MIMENoSniffFlag, data: &[u8]) ->
       Option<(String, String)> {
-        if sniff_scriptable {
-            self.scriptable_classifier.classify(data)
-        } else {
-            None
+        match no_sniff_flag {
+            MIMENoSniffFlag::OFF => self.scriptable_classifier.classify(data),
+            _ => None
         }.or_else(|| self.plaintext_classifier.classify(data))
          .or_else(|| self.image_classifier.classify(data))
          .or_else(|| self.audio_video_classifier.classify(data))
